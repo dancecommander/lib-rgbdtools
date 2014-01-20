@@ -57,8 +57,9 @@ class KeyframeGraphSolver
      * @param associations vector of input keyframe associations
      */
     virtual void solve(
-      KeyframeVector& keyframes,
-      const KeyframeAssociationVector& associations) = 0;
+  KeyframeVector& keyframes,
+  const KeyframeAssociationVector& associations,
+  const KeyframeAssociationVector& odometryEdges)=0;
       
     virtual void solve(
       KeyframeVector& keyframes,

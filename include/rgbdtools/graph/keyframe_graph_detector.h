@@ -107,6 +107,16 @@ class KeyframeGraphDetector
       const KeyframeVector& keyframes,
       KeyframeAssociationVector& associations);
 
+    /** @brief checks the features of the most recently added frame against a subset of keyframes */
+    void onlineLoopClosureDetector(KeyframeVector& keyframes,
+  KeyframeAssociationVector& associations); 
+    
+    /** @brief Extracts features from a single keyframe */
+    void extractFeatures(RGBDKeyframe &keyframe);
+
+    /** @brief Trains matcher from features in a single keyframe */
+    void prepareMatcher(KeyframeVector &keyframes);
+
    private:
 
     bool verbose_;
@@ -189,6 +199,8 @@ class KeyframeGraphDetector
     cv::Mat match_matrix_;  
     
     std::vector<cv::FlannBasedMatcher> matchers_;
+
+    cv::FlannBasedMatcher matcher_;
     
     // ------------
     
@@ -197,7 +209,9 @@ class KeyframeGraphDetector
     void buildMatchMatrixSurfTree(const KeyframeVector& keyframes);
       
     void buildCandidateMatrixSurfTree();
-          
+
+    
+    
     void buildCorrespondenceMatrix(
       const KeyframeVector& keyframes,
       KeyframeAssociationVector& associations);
@@ -227,6 +241,8 @@ class KeyframeGraphDetector
 
     void prepareMatchers(
       const KeyframeVector& keyframes);
+
+    cv::FlannBasedMatcher trainMatcher(const RGBDKeyframe& keyframe);
     
 };
 

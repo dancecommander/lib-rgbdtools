@@ -58,6 +58,65 @@ KeyframeGraphSolverG2O::~KeyframeGraphSolverG2O()
   delete optimization_algorithm_;
 }
 
+void KeyframeGraphSolverG2O::solve(KeyframeVector& keyframes, const KeyframeAssociationVector& associations, const KeyframeAssociationVector& odometryEdges)
+{  
+  // add vertices
+  printf("Adding vertices...\n");
+  for (unsigned int kf_idx = 0; kf_idx < keyframes.size(); ++kf_idx)
+  {
+    const RGBDKeyframe& keyframe = keyframes[kf_idx];
+    addVertex(keyframe.pose, kf_idx);   
+  }
+  
+    // add edges odometry edges 
+  printf("Adding odometry edges...\n");
+  
+  InformationMatrix inf_identity = InformationMatrix::Identity();
+  
+  for (unsigned int odom_idx = 0; odom_idx <odometryEdges.size()-1; odom_idx++)
+  {
+    const KeyframeAssociation& odometryEdge = odometryEdges[odom_idx];
+    int from_idx = odometryEdge.kf_idx_a;
+    int to_idx   = odometryEdge.kf_idx_b;
+    
+    InformationMatrix inf = inf_identity * 100;
+    
+    addEdge(from_idx, to_idx, odometryEdge.a2b, inf);
+  }
+  
+  // add edges
+  printf("Adding RANSAC edges...\n");
+  for (unsigned int as_idx = 0; as_idx < associations.size(); ++as_idx)
+  {
+    const KeyframeAssociation& association = associations[as_idx];
+    int from_idx = association.kf_idx_a;
+    int to_idx   = association.kf_idx_b;
+    
+    int matches = association.matches.size();
+    InformationMatrix inf = inf_identity * matches;
+    
+    addEdge(from_idx, to_idx, association.a2b, inf);
+  }
+  
+  // run the optimization
+  printf("Optimizing...\n");
+  optimizeGraph();
+  
+  // update the keyframe poses
+  printf("Updating keyframe poses...\n");
+
+  AffineTransformVector optimized_poses;
+  optimized_poses.resize(keyframes.size());
+  getOptimizedPoses(optimized_poses);
+  
+  for (unsigned int kf_idx = 0; kf_idx < keyframes.size(); ++kf_idx)
+  {
+    RGBDKeyframe& keyframe = keyframes[kf_idx];
+    keyframe.pose = optimized_poses[kf_idx];
+  }
+}
+
+
 void KeyframeGraphSolverG2O::solve(
   KeyframeVector& keyframes,
   const KeyframeAssociationVector& associations,
@@ -136,68 +195,6 @@ void KeyframeGraphSolverG2O::solve(
   }
 }
 
-void KeyframeGraphSolverG2O::solve(
-  KeyframeVector& keyframes,
-  const KeyframeAssociationVector& associations)
-{  
-  // add vertices
-  printf("Adding vertices...\n");
-  for (unsigned int kf_idx = 0; kf_idx < keyframes.size(); ++kf_idx)
-  {
-    const RGBDKeyframe& keyframe = keyframes[kf_idx];
-    addVertex(keyframe.pose, kf_idx);   
-  }
-  
-    // add edges odometry edges 
-  printf("Adding VO edges...\n");
-  
-  InformationMatrix inf_identity = InformationMatrix::Identity();
-  
-  for (unsigned int kf_idx = 0; kf_idx < keyframes.size()-1; ++kf_idx)
-  {
-    int from_idx = kf_idx;
-    int to_idx   = kf_idx+1;
-        
-    const AffineTransform& from_pose = keyframes[from_idx].pose;
-    const AffineTransform& to_pose   = keyframes[to_idx].pose;
-        
-    AffineTransform tf = from_pose.inverse() * to_pose;
-    
-    InformationMatrix inf = inf_identity * 100.0;
-    addEdge(from_idx, to_idx, tf, inf);
-  }
-  
-  // add edges
-  printf("Adding RANSAC edges...\n");
-  for (unsigned int as_idx = 0; as_idx < associations.size(); ++as_idx)
-  {
-    const KeyframeAssociation& association = associations[as_idx];
-    int from_idx = association.kf_idx_a;
-    int to_idx   = association.kf_idx_b;
-    
-    int matches = association.matches.size();
-    InformationMatrix inf = inf_identity * matches;
-    
-    addEdge(from_idx, to_idx, association.a2b, inf);
-  }
-  
-  // run the optimization
-  printf("Optimizing...\n");
-  optimizeGraph();
-  
-  // update the keyframe poses
-  printf("Updating keyframe poses...\n");
-
-  AffineTransformVector optimized_poses;
-  optimized_poses.resize(keyframes.size());
-  getOptimizedPoses(optimized_poses);
-  
-  for (unsigned int kf_idx = 0; kf_idx < keyframes.size(); ++kf_idx)
-  {
-    RGBDKeyframe& keyframe = keyframes[kf_idx];
-    keyframe.pose = optimized_poses[kf_idx];
-  }
-}
 
 void KeyframeGraphSolverG2O::addVertex(
   const AffineTransform& vertex_pose,

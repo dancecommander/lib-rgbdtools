@@ -46,6 +46,7 @@ KeyframeGraphDetector::KeyframeGraphDetector()
   matcher_use_desc_ratio_test_ = true;
   matcher_max_desc_ratio_ = 0.75;  // when ratio_test = true
   matcher_max_desc_dist_ = 0.5;    // when ratio_test = false
+  matchers_.clear();
   
   // common SAC params
   sac_max_eucl_dist_sq_ = 0.03 * 0.03;
@@ -157,6 +158,185 @@ void KeyframeGraphDetector::generateKeyframeAssociations(
   prepareFeaturesForRANSAC(keyframes);
   
   buildAssociationMatrix(keyframes, associations);  
+}
+
+void KeyframeGraphDetector::onlineLoopClosureDetector(KeyframeVector& keyframes,
+  KeyframeAssociationVector& associations){
+
+  int kf_size = keyframes.size();
+  RGBDFrame& keyframe = keyframes[kf_size-1];
+  int kf_idx_q = kf_size-1;
+
+  if(verbose_)
+    printf("Computing SURF neighbors\n");
+
+  //Initializing match vector
+  std::vector<int> match_vector;
+
+    // find k nearest matches for each feature in the keyframe
+    std::vector<std::vector<cv::DMatch> > matches_vector;
+    matcher_.knnMatch(keyframe.descriptors, matches_vector, k_nearest_neighbors_);
+
+    // create empty bins vector of Pairs <count, image_index>
+    std::vector<std::pair<int, int> > bins;
+    bins.resize(kf_size);
+    for (unsigned int b = 0; b < bins.size(); ++b) 
+      bins[b] = std::pair<int, int>(0, b);
+
+    // fill out bins with match indices
+    for (unsigned int j = 0; j < matches_vector.size(); ++j)
+    {
+      std::vector<cv::DMatch>& matches = matches_vector[j];
+      for (unsigned int k = 0; k < matches.size(); ++k)
+      {
+        bins[matches[k].imgIdx].first++;
+      }
+    }
+    
+    for (unsigned int b = 0; b < kf_size-1; ++b)
+    {
+      unsigned int index_b = bins[b].second;
+      int corresp_count = bins[b].first;
+      
+   
+        match_vector.push_back(corresp_count);
+        //printf("%d matches with Keyframe %d \n",(int)corresp_count,(int)index_b );
+    }
+
+    //Now pick suitable candidates for ransac (index of the vector corresponds to the keyframe index)
+    std::vector<int> candidate_vector;
+
+    //prepareMatchers(keyframes);
+    for (int i = 0; i<4; i++){
+      int max_matches = 0;
+      int kf_idx_t = -1;
+      for (int j = 0; j < match_vector.size(); j++)
+      {
+        if(match_vector[j]>max_matches){
+          kf_idx_t = j;
+          max_matches = match_vector[j];
+          match_vector[j]=0; 
+        }
+      }
+      if (kf_idx_t==-1){
+        printf("No match made \n");
+        break;
+      }
+      if (abs(kf_idx_q - kf_idx_t)<2)
+      {
+        printf("Keyframes are temporally adjacent, skipping!\n"); }
+        else{
+          printf("%dst/rd/th Best match to KF %d is KF %d [%d] \n",i,kf_idx_q,kf_idx_t,max_matches);
+
+
+      //RANSAC matching
+
+          printf("[RANSAC %d to %d]: \n", kf_idx_q, kf_idx_t);
+
+          std::vector<cv::DMatch> inlier_matches;
+
+          // perform ransac matching, b onto a
+          Eigen::Matrix4f transformation;
+
+          // query, train
+          int iterations = pairwiseMatching(
+            kf_idx_q, kf_idx_t, keyframes, inlier_matches, transformation);
+          printf("[RANSAC inliers %d]: \n",(int)inlier_matches.size());
+
+          if (inlier_matches.size() >= sac_min_inliers_)
+          {
+
+
+            // add an association
+            KeyframeAssociation association;
+            association.type = KeyframeAssociation::RANSAC;
+            association.kf_idx_a = kf_idx_t;
+            association.kf_idx_b = kf_idx_q;
+            association.matches  = inlier_matches;
+            association.a2b = transformation;
+            associations.push_back(association);
+
+            // output the results to screen         
+            printf("RANSAC pass [%d][%d]\n Association added between frames [%d][%d] \n Total number of associations: %d \n",
+             iterations, (int)inlier_matches.size(),kf_idx_t,kf_idx_q, (int)associations.size());    
+          } 
+        }  
+      }
+
+
+
+  }
+
+
+void KeyframeGraphDetector::extractFeatures(RGBDKeyframe &keyframe){
+
+    double surf_threshold = init_surf_threshold_;
+    bool upright = true;
+    double min_surf_threshold = 25;
+
+    cv::SurfDescriptorExtractor extractor;
+
+    while (surf_threshold >= min_surf_threshold)
+    {
+      cv::SurfFeatureDetector detector(surf_threshold, 4, 2, true, upright);
+      keyframe.keypoints.clear();
+      detector.detect(keyframe.rgb_img, keyframe.keypoints);
+    
+      if ((int)keyframe.keypoints.size() < n_keypoints_)
+      {
+        if(verbose_)
+          printf("[KF] %d SURF keypoints detected (threshold: %.1f)\n", 
+            (int)keyframe.keypoints.size(), surf_threshold); 
+        
+        surf_threshold /= 2.0;
+      }
+      else
+      {
+        keyframe.keypoints.resize(n_keypoints_);
+        
+        if(verbose_)
+          printf("[KF] %d SURF keypoints detected (threshold: %.1f)\n",  
+            (int)keyframe.keypoints.size(), surf_threshold); 
+        
+        break;
+      }
+    }
+    extractor.compute(keyframe.rgb_img, keyframe.keypoints, keyframe.descriptors);
+    keyframe.computeDistributions();
+}
+
+cv::FlannBasedMatcher KeyframeGraphDetector::trainMatcher(const RGBDKeyframe& keyframe){
+    // build matcher  
+  cv::Ptr<cv::flann::IndexParams> indexParams;
+
+  if (pairwise_matcher_index_ == PAIRWISE_MATCHER_LINEAR)
+    indexParams = new cv::flann::LinearIndexParams();
+  else if (pairwise_matcher_index_ == PAIRWISE_MATCHER_KDTREE)
+    indexParams = new cv::flann::KDTreeIndexParams();  
+
+  cv::Ptr<cv::flann::SearchParams> searchParams = new cv::flann::SearchParams(32);
+
+  cv::FlannBasedMatcher matcher = cv::FlannBasedMatcher(indexParams, searchParams);
+
+    // train
+  printf("Descriptors size is: %d \n", keyframe.descriptors.size().height);
+  std::vector<cv::Mat> descriptors_vector;
+  descriptors_vector.push_back(keyframe.descriptors);
+  matcher.add(descriptors_vector);
+  matcher.train(); 
+  return matcher;
+}
+
+void KeyframeGraphDetector::prepareMatcher(KeyframeVector &keyframes){
+  if(verbose_) printf("Training individual keyframe matcher ...\n");
+  unsigned int kf_idx = keyframes.size()-1;
+  const RGBDKeyframe& keyframe = keyframes[kf_idx];
+  std::vector<cv::Mat> descriptors_vector;
+  descriptors_vector.push_back(keyframe.descriptors);
+
+  //Add all descriptors to the big matcher matrix (this contains all decriptors ever recorded) and train it
+  matcher_.add(descriptors_vector);
+  matcher_.train();
 }
 
 void KeyframeGraphDetector::prepareMatchers(
@@ -479,10 +659,8 @@ void KeyframeGraphDetector::getCandidateMatches(
   if (matcher_use_desc_ratio_test_)
   {
     std::vector<DMatchVector> all_matches2;
+    matcher.knnMatch(frame_q.descriptors, all_matches2, 2);
     
-    matcher.knnMatch(
-      frame_q.descriptors, all_matches2, 2);
-
     for (unsigned int m_idx = 0; m_idx < all_matches2.size(); ++m_idx)
     {
       const cv::DMatch& match1 = all_matches2[m_idx][0];
@@ -504,10 +682,8 @@ void KeyframeGraphDetector::getCandidateMatches(
   else
   {
     DMatchVector all_matches;
-    
     matcher.match(
       frame_q.descriptors, all_matches);
-
     for (unsigned int m_idx = 0; m_idx < all_matches.size(); ++m_idx)
     {
       const cv::DMatch& match = all_matches[m_idx];
@@ -540,7 +716,7 @@ int KeyframeGraphDetector::pairwiseMatching(
       kf_idx_q, kf_idx_t, keyframes, best_inlier_matches, best_transformation);
   }
   else if (pairwise_matching_method_ == PAIRWISE_MATCHING_BFSAC)
-  {
+  { 
     iterations = pairwiseMatchingBFSAC(
       kf_idx_q, kf_idx_t, keyframes, best_inlier_matches, best_transformation);
   }
@@ -560,8 +736,8 @@ int KeyframeGraphDetector::pairwiseMatchingBFSAC(
 
   const RGBDFrame& frame_t = keyframes[kf_idx_t];
   const RGBDFrame& frame_q = keyframes[kf_idx_q];
-  cv::FlannBasedMatcher& matcher = matchers_[kf_idx_t];
-  
+  //cv::FlannBasedMatcher& matcher = matchers_[kf_idx_t];
+  cv::FlannBasedMatcher matcher = trainMatcher(keyframes[kf_idx_t]);
   // find candidate matches
   DMatchVector candidate_matches;
   getCandidateMatches(frame_q, frame_t, matcher, candidate_matches);
@@ -679,11 +855,13 @@ int KeyframeGraphDetector::pairwiseMatchingRANSAC(
   // find candidate matches
   const RGBDFrame& frame_t = keyframes[kf_idx_t];
   const RGBDFrame& frame_q = keyframes[kf_idx_q];
-  cv::FlannBasedMatcher& matcher = matchers_[kf_idx_t];
-  
+  //cv::FlannBasedMatcher& matcher = matchers_[kf_idx_t];
+  printf("Training matcher\n");
+  cv::FlannBasedMatcher matcher = trainMatcher(keyframes[kf_idx_t]);
   DMatchVector candidate_matches;
+  printf("Got here -----1\n");
   getCandidateMatches(frame_q, frame_t, matcher, candidate_matches);
-  
+  printf("Got here -----2\n");
   // check if enough matches are present
   if (candidate_matches.size() < min_sample_size)  return 0;
   if (candidate_matches.size() < sac_min_inliers_) return 0;
@@ -720,7 +898,6 @@ int KeyframeGraphDetector::pairwiseMatchingRANSAC(
   int iteration = 0;
   
   std::set<int> mask;
-  
   while(true)
   //for (iteration = 0; iteration < ransac_max_iterations_; ++iteration)
   {   
