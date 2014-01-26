@@ -57,6 +57,7 @@ KeyframeGraphDetector::KeyframeGraphDetector()
   ransac_confidence_ = 0.99;
   ransac_max_iterations_ = 1000;
   ransac_sufficient_inlier_ratio_ = 0.75;
+  motion_constraint_ = true;
 
   // output params
   verbose_ = false;     // console output
@@ -66,11 +67,22 @@ KeyframeGraphDetector::KeyframeGraphDetector()
   log_one_minus_ransac_confidence_ = log(1.0 - ransac_confidence_);
   
   setOutputPath(std::getenv("HOME"));
+
+  double surf_threshold=0;
+    int edot=0;
+    int eintegral=0;
+    int e=0;
+
 }
 
 KeyframeGraphDetector::~KeyframeGraphDetector()
 {
 
+}
+
+void KeyframeGraphDetector::setRANSACMinTemporalDistance(int graph_min_temporal_distance)
+{
+  RANSAC_min_temporal_distance_=graph_min_temporal_distance;
 }
 
 void KeyframeGraphDetector::setSACReestimateTf(bool sac_reestimate_tf)
@@ -167,9 +179,6 @@ void KeyframeGraphDetector::onlineLoopClosureDetector(KeyframeVector& keyframes,
   RGBDFrame& keyframe = keyframes[kf_size-1];
   int kf_idx_q = kf_size-1;
 
-  if(verbose_)
-    printf("Computing SURF neighbors\n");
-
   //Initializing match vector
   std::vector<int> match_vector;
 
@@ -207,7 +216,7 @@ void KeyframeGraphDetector::onlineLoopClosureDetector(KeyframeVector& keyframes,
     std::vector<int> candidate_vector;
 
     //prepareMatchers(keyframes);
-    for (int i = 0; i<4; i++){
+    for (int i = 0; i<n_candidates_; i++){
       int max_matches = 0;
       int kf_idx_t = -1;
       for (int j = 0; j < match_vector.size(); j++)
@@ -222,16 +231,16 @@ void KeyframeGraphDetector::onlineLoopClosureDetector(KeyframeVector& keyframes,
         printf("No match made \n");
         break;
       }
-      if (abs(kf_idx_q - kf_idx_t)<2)
+      if (abs(kf_idx_q - kf_idx_t)<RANSAC_min_temporal_distance_)
       {
-        printf("Keyframes are temporally adjacent, skipping!\n"); }
+        printf("Keyframes are too temporally close, skipping!\n"); }
         else{
           printf("%dst/rd/th Best match to KF %d is KF %d [%d] \n",i,kf_idx_q,kf_idx_t,max_matches);
 
 
       //RANSAC matching
 
-          printf("[RANSAC %d to %d]: \n", kf_idx_q, kf_idx_t);
+          //printf("[RANSAC %d to %d]: \n", kf_idx_q, kf_idx_t);
 
           std::vector<cv::DMatch> inlier_matches;
 
@@ -301,6 +310,52 @@ void KeyframeGraphDetector::extractFeatures(RGBDKeyframe &keyframe){
         break;
       }
     }
+    /*
+    bool upright = true;
+    double Kdot = 0.1;
+    double Kint = 0.1;
+    double K = 2;
+    int allowed_error = 100;
+    int desired_features = 400;
+    double min_surf_threshold = 25;
+    double surf_threshold_bias = init_surf_threshold_;
+
+    cv::SurfDescriptorExtractor extractor;
+
+
+    while (true)
+    {
+      surf_threshold = surf_threshold_bias + e*K + eintegral*Kint + edot*Kdot;
+      printf("surf_threshold: %f \n", surf_threshold);
+      if(surf_threshold<min_surf_threshold){
+        surf_threshold=min_surf_threshold;
+      }
+      printf("surf_threshold: %f \n", surf_threshold);
+      cv::SurfFeatureDetector detector(surf_threshold, 4, 2, true, upright);
+      keyframe.keypoints.clear();
+      detector.detect(keyframe.rgb_img, keyframe.keypoints);
+      edot = keyframe.keypoints.size() - desired_features - e; 
+      e = keyframe.keypoints.size() - desired_features;
+      eintegral = eintegral + e;
+      if (abs(e) > allowed_error )
+      {
+        if(verbose_)
+          printf("error: %d surf_threshold: %f \n", 
+            e, surf_threshold); 
+      }
+      else
+      {
+       
+        if(verbose_)
+          printf("error: %d surf_threshold: %f\n", 
+            e, surf_threshold); 
+        
+        break;
+      }
+    }
+
+    */
+
     extractor.compute(keyframe.rgb_img, keyframe.keypoints, keyframe.descriptors);
     keyframe.computeDistributions();
 }
@@ -318,8 +373,6 @@ cv::FlannBasedMatcher KeyframeGraphDetector::trainMatcher(const RGBDKeyframe& ke
 
   cv::FlannBasedMatcher matcher = cv::FlannBasedMatcher(indexParams, searchParams);
 
-    // train
-  printf("Descriptors size is: %d \n", keyframe.descriptors.size().height);
   std::vector<cv::Mat> descriptors_vector;
   descriptors_vector.push_back(keyframe.descriptors);
   matcher.add(descriptors_vector);
@@ -856,12 +909,9 @@ int KeyframeGraphDetector::pairwiseMatchingRANSAC(
   const RGBDFrame& frame_t = keyframes[kf_idx_t];
   const RGBDFrame& frame_q = keyframes[kf_idx_q];
   //cv::FlannBasedMatcher& matcher = matchers_[kf_idx_t];
-  printf("Training matcher\n");
   cv::FlannBasedMatcher matcher = trainMatcher(keyframes[kf_idx_t]);
   DMatchVector candidate_matches;
-  printf("Got here -----1\n");
   getCandidateMatches(frame_q, frame_t, matcher, candidate_matches);
-  printf("Got here -----2\n");
   // check if enough matches are present
   if (candidate_matches.size() < min_sample_size)  return 0;
   if (candidate_matches.size() < sac_min_inliers_) return 0;
@@ -983,6 +1033,33 @@ int KeyframeGraphDetector::pairwiseMatchingRANSAC(
   }
   
   return iteration;
+}
+
+    void KeyframeGraphDetector::constrainMotion(Eigen::Matrix4f& motionEig)
+{
+  AffineTransform motion(motionEig);
+  if (motion_constraint_ == true)
+  {
+    float x, y, z, roll, pitch, yaw;
+    eigenAffineToXYZRPY(motion, x, y, z, roll, pitch, yaw);
+    XYZRPYToEigenAffine(x, y, 0, 0, 0, yaw, motion);
+  }
+  motionEig(0,0)=motion(0,0);
+  motionEig(0,1)=motion(0,1);
+  motionEig(0,2)=motion(0,2);
+  motionEig(0,3)=motion(0,3);
+  motionEig(1,0)=motion(1,0);
+  motionEig(1,1)=motion(1,1);
+  motionEig(1,2)=motion(1,2);
+  motionEig(1,3)=motion(1,3);
+  motionEig(2,0)=motion(2,0);
+  motionEig(2,1)=motion(2,1);
+  motionEig(2,2)=motion(2,2);
+  motionEig(2,3)=motion(2,3);
+  motionEig(3,0)=motion(3,0);
+  motionEig(3,1)=motion(3,1);
+  motionEig(3,2)=motion(3,2);
+  motionEig(3,3)=motion(3,3);
 }
 
 } // namespace rgbdtools
