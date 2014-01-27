@@ -45,6 +45,19 @@ RGBDKeyframe::RGBDKeyframe(const RGBDFrame& frame):
   index = frame.index;
 }
 
+void RGBDKeyframe::storeFilteredPointCloud(double max_range, double max_stdev,double leaf_size){
+  //Create dense cloud from depth map
+  PointCloudT::Ptr denseCloudPtr(new PointCloudT());
+  constructDensePointCloud(*denseCloudPtr, max_range, max_stdev);
+
+  //Filter the dense cloud and store the filtered cloud
+  pcl::VoxelGrid<PointT> sor;
+  sor.setInputCloud(denseCloudPtr);
+  sor.setLeafSize(leaf_size, leaf_size, leaf_size);
+
+  sor.filter(filteredCloud);
+}
+
 bool RGBDKeyframe::save(
   const RGBDKeyframe& keyframe, 
   const std::string& path)

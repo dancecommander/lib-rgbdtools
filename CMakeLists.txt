@@ -79,4 +79,3 @@ install(TARGETS global_cloud_align DESTINATION bin)
 add_executable(keyframe_associations apps/keyframe_associations.cpp)
 target_link_libraries (keyframe_associations rgbdtools)
 install(TARGETS keyframe_associations DESTINATION bin)
-
