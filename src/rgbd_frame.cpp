@@ -365,12 +365,16 @@ bool RGBDFrame::save(
   std::string cloud_filename  = path + "/cloud.pcd";
   
   // create the directory
-  bool directory_result = boost::filesystem::create_directory(path); 
+  std::cout << "Creating directory: " << path << std::endl; 
+  bool directory_result = boost::filesystem::create_directories(path); 
 
   if (!directory_result)    
   {
     std::cerr << "Could not create directory:" <<  path << std::endl;
     return false;
+  }
+  else{
+    std::cout << "Created directory" << path <<std::endl;
   }
 
   // save header

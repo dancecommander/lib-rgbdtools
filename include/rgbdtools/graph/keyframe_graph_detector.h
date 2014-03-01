@@ -100,6 +100,8 @@ class KeyframeGraphDetector
       KeyframeVector& keyframes,
       KeyframeAssociationVector& associations);
 
+    void prepareMatchers(
+      const KeyframeVector& keyframes);
     // --------------------------------------------
 
     void prepareFeaturesForRANSAC(KeyframeVector& keyframes);
@@ -111,6 +113,9 @@ class KeyframeGraphDetector
     /** @brief checks the features of the most recently added frame against a subset of keyframes */
     void onlineLoopClosureDetector(KeyframeVector& keyframes,
   KeyframeAssociationVector& associations); 
+
+    /** @brief checks for similar images among KF and returns a difference in pose if a match is made */
+    bool appearanceLocalizer(KeyframeVector& keyframes, AffineTransform& transformation);
     
     /** @brief Extracts features from a single keyframe */
     void extractFeatures(RGBDKeyframe &keyframe);
@@ -220,12 +225,11 @@ class KeyframeGraphDetector
     void buildMatchMatrixSurfTree(const KeyframeVector& keyframes);
       
     void buildCandidateMatrixSurfTree();
-
     
     void buildCorrespondenceMatrix(
       const KeyframeVector& keyframes,
       KeyframeAssociationVector& associations);
-        
+
     int pairwiseMatching(
       int kf_idx_q, int kf_idx_t,
       const KeyframeVector& keyframes,
@@ -249,8 +253,6 @@ class KeyframeGraphDetector
       cv::FlannBasedMatcher& matcher,
       DMatchVector& candidate_matches);
 
-    void prepareMatchers(
-      const KeyframeVector& keyframes);
 
     cv::FlannBasedMatcher trainMatcher(const RGBDKeyframe& keyframe);
 

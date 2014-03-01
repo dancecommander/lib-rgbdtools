@@ -160,7 +160,9 @@ bool loadKeyframes(
       std::cout << "Loading " << path_kf << std::endl;
       RGBDKeyframe keyframe;
       bool result_load = RGBDKeyframe::load(keyframe, path_kf);
-      if (result_load) keyframes.push_back(keyframe);
+      if (result_load) {
+        keyframes.push_back(keyframe);
+      }
       else
       {
         std::cerr << "Error loading" << std::endl; 
